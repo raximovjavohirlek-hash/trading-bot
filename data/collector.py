@@ -40,8 +40,8 @@ class MarketDataCollector:
                         source=tick["source"]
                     )
                 
-                # Periodically update macro data (every 30s)
-                if not self.latest_macro or (time.time() - self.latest_macro.get("updated_at", 0)) > 30:
+                # Periodically update macro data (every 120s)
+                if not self.latest_macro or (time.time() - self.latest_macro.get("updated_at", 0)) > 120:
                     macro = await self.yfinance.get_macro_data()
                     macro["updated_at"] = time.time()
                     self.latest_macro = macro
@@ -89,6 +89,7 @@ class MarketDataCollector:
                 if candles:
                     await db_manager.save_candles(candles)
                     logger.info(f"Sinxronlandi: {tf} ramkasi uchun {len(candles)} ta sham.")
+                await asyncio.sleep(1.0)
             except Exception as e:
                 logger.error(f"Sham sinxronlashda xatolik ({tf}): {e}")
 
