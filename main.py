@@ -3,6 +3,7 @@ import asyncio
 import sys
 from aiohttp import web
 from aiogram import Bot, Dispatcher
+from aiogram.exceptions import TelegramUnauthorizedError
 from core.config import settings
 from core.logger import logger
 from core.database import db_manager
@@ -45,11 +46,15 @@ async def main():
     web_runner = await start_health_server()
 
     # 4. Setup Telegram Bot & Dispatcher
-    if not settings.TELEGRAM_BOT_TOKEN:
-        logger.error("TELEGRAM_BOT_TOKEN topilmadi! Bot ishga tusha olmaydi. .env faylini to'ldiring.")
+    token = settings.TELEGRAM_BOT_TOKEN.strip()
+    if not token or token == "your_token_here":
+        logger.error("❌ TELEGRAM_BOT_TOKEN topilmadi yoki defolt qiymatda ('your_token_here')!")
+        logger.error("👉 Render Dashboard -> Environment tabida TELEGRAM_BOT_TOKEN ga bot tokeningizni kiriting.")
+        logger.info("HTTP Web server faol turibdi...")
+        await asyncio.Event().wait()
         return
 
-    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+    bot = Bot(token=token)
     dp = Dispatcher()
 
     # Register Routers
@@ -62,6 +67,11 @@ async def main():
     try:
         logger.info("Telegram Bot Polling boshlanmoqda...")
         await dp.start_polling(bot)
+    except TelegramUnauthorizedError:
+        logger.error("❌ XATO: TELEGRAM_BOT_TOKEN noto'g'ri! Telegram 'Unauthorized' (401) qaytardi.")
+        logger.error("👉 Render Dashboard -> Environment -> TELEGRAM_BOT_TOKEN qiymatini @BotFather bergan token bilan almashtiring.")
+        logger.info("HTTP Web Server faol turibdi (Health check uchun)...")
+        await asyncio.Event().wait()
     finally:
         await web_runner.cleanup()
         data_collector.stop()
