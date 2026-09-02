@@ -53,29 +53,31 @@ class MarketDataCollector:
 
     async def get_valid_tick(self) -> Optional[Dict[str, Any]]:
         # 1. Try GoldAPI if key exists
-        if settings.GOLDAPI_KEY:
+        if settings.GOLDAPI_KEY and settings.GOLDAPI_KEY != "your_goldapi_key_here":
             try:
                 tick = await self.goldapi.get_latest_price("XAUUSD")
                 is_valid, reason = data_quality_engine.validate_tick(tick)
                 if is_valid:
                     self.active_provider_name = "GoldAPI.io"
                     return tick
-                else:
-                    logger.warning(f"GoldAPI ma'lumoti rad etildi ({reason}), YahooFinance provayderiga o'tilmoqda...")
             except Exception as exc:
-                logger.warning(f"GoldAPI ishlamadi ({exc}), YahooFinance provayderiga o'tilmoqda...")
+                pass
 
-        # 2. Fallback to YahooFinance (GC=F)
+        # 2. Fallback to YahooFinance / Stooq / Provider Cache
         try:
             tick = await self.yfinance.get_latest_price("XAUUSD")
             is_valid, reason = data_quality_engine.validate_tick(tick)
             if is_valid:
-                self.active_provider_name = "YahooFinance (GC=F)"
+                self.active_provider_name = tick.get("source", "YahooFinance")
                 return tick
-            else:
-                logger.error(f"YahooFinance ma'lumoti ham rad etildi: {reason}")
         except Exception as exc:
-            logger.error(f"YahooFinance ham ishlamadi: {exc}")
+            pass
+
+        # 3. Ultimate Fallback: SQLite DB Cache
+        db_tick = await db_manager.get_latest_tick("XAUUSD")
+        if db_tick:
+            self.active_provider_name = "SQLite DB Cache"
+            return db_tick
 
         return None
 

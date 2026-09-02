@@ -20,7 +20,7 @@ class Settings:
     DB_PATH: Path = BASE_DIR / "gold_market.db"
     
     # Data Polling & Quality
-    POLL_INTERVAL_SECONDS: int = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
+    POLL_INTERVAL_SECONDS: int = int(os.getenv("POLL_INTERVAL_SECONDS", "30"))
     MAX_SPREAD_THRESHOLD: float = float(os.getenv("MAX_SPREAD_THRESHOLD", "15.0")) # $15 max spread alert
     STALE_PRICE_SECONDS: int = int(os.getenv("STALE_PRICE_SECONDS", "300")) # 5 min stale check
     
