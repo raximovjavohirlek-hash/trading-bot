@@ -7,16 +7,18 @@ from core.logger import logger
 from core.database import db_manager
 from data.goldapi_provider import GoldAPIProvider
 from data.yfinance_provider import YahooFinanceProvider
+from data.binance_provider import BinanceGoldProvider
 from data.data_quality import data_quality_engine
 
 class MarketDataCollector:
     def __init__(self):
         self.goldapi = GoldAPIProvider()
+        self.binance = BinanceGoldProvider()
         self.yfinance = YahooFinanceProvider()
         self.is_running = False
         self.latest_tick: Optional[Dict[str, Any]] = None
         self.latest_macro: Optional[Dict[str, Any]] = None
-        self.active_provider_name = "GoldAPI"
+        self.active_provider_name = "Binance Live"
 
     async def start(self):
         self.is_running = True
@@ -52,7 +54,7 @@ class MarketDataCollector:
             await asyncio.sleep(settings.POLL_INTERVAL_SECONDS)
 
     async def get_valid_tick(self) -> Optional[Dict[str, Any]]:
-        # 1. Try GoldAPI if key exists
+        # 1. Try GoldAPI if valid key exists
         if settings.GOLDAPI_KEY and settings.GOLDAPI_KEY != "your_goldapi_key_here":
             try:
                 tick = await self.goldapi.get_latest_price("XAUUSD")
@@ -60,20 +62,30 @@ class MarketDataCollector:
                 if is_valid:
                     self.active_provider_name = "GoldAPI.io"
                     return tick
-            except Exception as exc:
+            except Exception:
                 pass
 
-        # 2. Fallback to YahooFinance / Stooq / Provider Cache
+        # 2. Try Binance Live Market (PAXG/USDT 100% Real Live Gold Price)
+        try:
+            tick = await self.binance.get_latest_price("XAUUSD")
+            is_valid, reason = data_quality_engine.validate_tick(tick)
+            if is_valid:
+                self.active_provider_name = "Binance Live (PAXG/USDT)"
+                return tick
+        except Exception:
+            pass
+
+        # 3. Fallback to YahooFinance (GC=F)
         try:
             tick = await self.yfinance.get_latest_price("XAUUSD")
             is_valid, reason = data_quality_engine.validate_tick(tick)
             if is_valid:
                 self.active_provider_name = tick.get("source", "YahooFinance")
                 return tick
-        except Exception as exc:
+        except Exception:
             pass
 
-        # 3. Ultimate Fallback: SQLite DB Cache
+        # 4. Fallback to SQLite DB Cache
         db_tick = await db_manager.get_latest_tick("XAUUSD")
         if db_tick:
             self.active_provider_name = "SQLite DB Cache"
@@ -82,18 +94,26 @@ class MarketDataCollector:
         return None
 
     async def sync_historical_candles(self):
-        """Fetches and saves multi-timeframe candles (15m, 1h, 4h, 1d) into SQLite."""
+        """Fetches multi-timeframe candles (15m, 1h, 4h, 1d) from Binance / YahooFinance."""
         logger.info("Tarixiy shamlarni ma'lumotlar bazasiga sinxronlash boshlandi...")
         timeframes = ["15m", "1h", "4h", "1d"]
         for tf in timeframes:
+            candles = []
             try:
-                candles = await self.yfinance.get_historical_candles("XAUUSD", timeframe=tf, limit=150)
-                if candles:
-                    await db_manager.save_candles(candles)
-                    logger.info(f"Sinxronlandi: {tf} ramkasi uchun {len(candles)} ta sham.")
-                await asyncio.sleep(1.0)
-            except Exception as e:
-                logger.error(f"Sham sinxronlashda xatolik ({tf}): {e}")
+                candles = await self.binance.get_historical_candles("XAUUSD", timeframe=tf, limit=150)
+            except Exception:
+                pass
+
+            if not candles:
+                try:
+                    candles = await self.yfinance.get_historical_candles("XAUUSD", timeframe=tf, limit=150)
+                except Exception:
+                    pass
+
+            if candles:
+                await db_manager.save_candles(candles)
+                logger.info(f"Sinxronlandi: {tf} ramkasi uchun {len(candles)} ta real sham.")
+            await asyncio.sleep(0.5)
 
     def stop(self):
         self.is_running = False
