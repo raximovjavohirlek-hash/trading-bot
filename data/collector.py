@@ -5,20 +5,22 @@ from typing import Optional, Dict, Any
 from core.config import settings
 from core.logger import logger
 from core.database import db_manager
+from data.tradingview_provider import TradingViewGoldProvider
+from data.binance_provider import BinanceGoldProvider
 from data.goldapi_provider import GoldAPIProvider
 from data.yfinance_provider import YahooFinanceProvider
-from data.binance_provider import BinanceGoldProvider
 from data.data_quality import data_quality_engine
 
 class MarketDataCollector:
     def __init__(self):
-        self.goldapi = GoldAPIProvider()
+        self.tradingview = TradingViewGoldProvider()
         self.binance = BinanceGoldProvider()
+        self.goldapi = GoldAPIProvider()
         self.yfinance = YahooFinanceProvider()
         self.is_running = False
         self.latest_tick: Optional[Dict[str, Any]] = None
         self.latest_macro: Optional[Dict[str, Any]] = None
-        self.active_provider_name = "Binance Live"
+        self.active_provider_name = "TradingView (OANDA)"
 
     async def start(self):
         self.is_running = True
@@ -54,7 +56,27 @@ class MarketDataCollector:
             await asyncio.sleep(settings.POLL_INTERVAL_SECONDS)
 
     async def get_valid_tick(self) -> Optional[Dict[str, Any]]:
-        # 1. Try GoldAPI if valid key exists
+        # 1. Primary: TradingView (OANDA Live Institutional Spot Gold)
+        try:
+            tick = await self.tradingview.get_latest_price("XAUUSD")
+            is_valid, reason = data_quality_engine.validate_tick(tick)
+            if is_valid:
+                self.active_provider_name = "TradingView (OANDA)"
+                return tick
+        except Exception as e:
+            logger.warning(f"TradingView provider error: {e}")
+
+        # 2. Secondary: Binance Live Market (PAXG/USDT 100% Real Physical Gold)
+        try:
+            tick = await self.binance.get_latest_price("XAUUSD")
+            is_valid, reason = data_quality_engine.validate_tick(tick)
+            if is_valid:
+                self.active_provider_name = "Binance Live (PAXG/USDT)"
+                return tick
+        except Exception:
+            pass
+
+        # 3. GoldAPI if key configured
         if settings.GOLDAPI_KEY and settings.GOLDAPI_KEY != "your_goldapi_key_here":
             try:
                 tick = await self.goldapi.get_latest_price("XAUUSD")
@@ -65,17 +87,7 @@ class MarketDataCollector:
             except Exception:
                 pass
 
-        # 2. Try Binance Live Market (PAXG/USDT 100% Real Live Gold Price)
-        try:
-            tick = await self.binance.get_latest_price("XAUUSD")
-            is_valid, reason = data_quality_engine.validate_tick(tick)
-            if is_valid:
-                self.active_provider_name = "Binance Live (PAXG/USDT)"
-                return tick
-        except Exception:
-            pass
-
-        # 3. Fallback to YahooFinance (GC=F)
+        # 4. Fallback: YahooFinance (GC=F)
         try:
             tick = await self.yfinance.get_latest_price("XAUUSD")
             is_valid, reason = data_quality_engine.validate_tick(tick)
@@ -85,7 +97,7 @@ class MarketDataCollector:
         except Exception:
             pass
 
-        # 4. Fallback to SQLite DB Cache
+        # 5. Fallback: SQLite DB Cache
         db_tick = await db_manager.get_latest_tick("XAUUSD")
         if db_tick:
             self.active_provider_name = "SQLite DB Cache"

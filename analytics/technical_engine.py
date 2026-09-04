@@ -7,7 +7,7 @@ class TechnicalEngine:
         pass
 
     @staticmethod
-    def calculate_indicators(candles: list[dict]) -> dict:
+    def calculate_indicators(candles: list[dict], current_price: float = None) -> dict:
         """
         Calculates EMA20, EMA50, EMA200, RSI14, ATR14, S/R Levels, SMC & CRT indicators.
         Expects candles sorted from oldest to newest.
@@ -36,15 +36,16 @@ class TechnicalEngine:
         df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
         df['ema200'] = df['close'].ewm(span=200, adjust=False).mean() if len(df) >= 200 else df['ema50']
 
-        current_close = df['close'].iloc[-1]
+        current_close = float(df['close'].iloc[-1])
+        ref_price = float(current_price) if (current_price and current_price > 0) else current_close
         ema20 = float(df['ema20'].iloc[-1])
         ema50 = float(df['ema50'].iloc[-1])
         ema200 = float(df['ema200'].iloc[-1])
 
         # Trend Determination
-        if current_close > ema20 > ema50:
+        if ref_price > ema20 > ema50:
             trend = "BULLISH"
-        elif current_close < ema20 < ema50:
+        elif ref_price < ema20 < ema50:
             trend = "BEARISH"
         else:
             trend = "RANGING / MIXED"
@@ -64,11 +65,20 @@ class TechnicalEngine:
         tr = pd.concat([high_low, high_cp, low_cp], axis=1).max(axis=1)
         atr = float(tr.rolling(14).mean().fillna(3.5).iloc[-1])
 
-        # 4. Key Support & Resistance (Swing Highs / Lows)
-        recent_highs = df['high'].tail(30).nlargest(3).tolist()
-        recent_lows = df['low'].tail(30).nsmallest(3).tolist()
-        resistance_levels = sorted(list(set([round(h, 2) for h in recent_highs if h > current_close])))
-        support_levels = sorted(list(set([round(l, 2) for l in recent_lows if l < current_close])))
+        # 4. Key Support & Resistance (strictly relative to ref_price)
+        # Resistance levels must be ABOVE ref_price, sorted ascending (nearest first)
+        recent_highs = [round(float(h), 2) for h in df['high'].tail(50) if float(h) > ref_price + 0.5]
+        resistance_levels = sorted(list(set(recent_highs)))[:3]
+
+        # Support levels must be BELOW ref_price, sorted descending (nearest first)
+        recent_lows = [round(float(l), 2) for l in df['low'].tail(50) if float(l) < ref_price - 0.5]
+        support_levels = sorted(list(set(recent_lows)), reverse=True)[:3]
+
+        # Fallback if no swing high/low found
+        if not resistance_levels:
+            resistance_levels = [round(ref_price + (atr * 1.5), 2), round(ref_price + (atr * 3.0), 2)]
+        if not support_levels:
+            support_levels = [round(ref_price - (atr * 1.5), 2), round(ref_price - (atr * 3.0), 2)]
 
         # 5. Smart Money Concepts (SMC): FVG & Structure Break
         smc_info = TechnicalEngine._analyze_smc(df)
@@ -83,8 +93,8 @@ class TechnicalEngine:
             "ema20": round(ema20, 2),
             "ema50": round(ema50, 2),
             "ema200": round(ema200, 2),
-            "support_levels": support_levels[:3],
-            "resistance_levels": resistance_levels[:3],
+            "support_levels": support_levels,
+            "resistance_levels": resistance_levels,
             "smc": smc_info,
             "crt": crt_info
         }

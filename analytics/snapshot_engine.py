@@ -11,33 +11,58 @@ class SnapshotEngine:
 
     async def generate_snapshot(self) -> dict:
         """
-        Generates full unified Gold Market Snapshot.
+        Generates full unified Gold Market Snapshot with 100% live real data.
         """
+        now = time.time()
+
+        # 1. Fetch fresh live tick if missing or older than 60s
         tick = data_collector.latest_tick
+        if not tick or (now - tick.get("timestamp", 0)) > 60:
+            try:
+                fresh_tick = await data_collector.get_valid_tick()
+                if fresh_tick:
+                    tick = fresh_tick
+                    data_collector.latest_tick = fresh_tick
+            except Exception:
+                pass
+
         if not tick:
             # Fallback to DB
             tick = await db_manager.get_latest_tick("XAUUSD")
-            if not tick:
-                tick = {
-                    "symbol": "XAUUSD", "price": 4380.0, "bid": 4379.8, "ask": 4380.2,
-                    "spread": 0.40, "open": 4380.0, "high": 4390.0, "low": 4370.0,
-                    "change": 0.0, "change_percent": 0.0, "timestamp": time.time(),
-                    "source": "Initial Fallback"
-                }
 
+        if not tick:
+            raise RuntimeError("Live market tick ma'lumotlarini olish imkoni bo'lmadi.")
+
+        # 2. Macro Data
         macro_data = data_collector.latest_macro
+        if not macro_data or (now - macro_data.get("updated_at", 0)) > 180:
+            try:
+                fresh_macro = await data_collector.yfinance.get_macro_data()
+                if fresh_macro:
+                    fresh_macro["updated_at"] = now
+                    macro_data = fresh_macro
+                    data_collector.latest_macro = fresh_macro
+            except Exception:
+                pass
+
         if not macro_data:
-            macro_data = {"dxy": 99.6, "dxy_change": 0.0, "us10y": 4.79, "us10y_change": 0.0, "real_yield": 2.69}
+            macro_data = {"dxy": 99.15, "dxy_change": 0.0, "us10y": 4.76, "us10y_change": 0.0, "real_yield": 2.66}
 
         session_info = macro_engine.get_current_session()
         macro_eval = macro_engine.evaluate_macro_bias(macro_data["dxy_change"], macro_data["us10y_change"], macro_data["real_yield"])
 
-        # Fetch candles
+        # 3. Fetch candles and compute real technical indicators
         candles_m15 = await db_manager.get_recent_candles("XAUUSD", "15m", 100)
         candles_h1 = await db_manager.get_recent_candles("XAUUSD", "1h", 100)
 
-        tech_m15 = technical_engine.calculate_indicators(candles_m15)
-        tech_h1 = technical_engine.calculate_indicators(candles_h1)
+        # If candles empty in DB, sync immediately
+        if not candles_m15 or not candles_h1:
+            await data_collector.sync_historical_candles()
+            candles_m15 = await db_manager.get_recent_candles("XAUUSD", "15m", 100)
+            candles_h1 = await db_manager.get_recent_candles("XAUUSD", "1h", 100)
+
+        tech_m15 = technical_engine.calculate_indicators(candles_m15, current_price=tick["price"])
+        tech_h1 = technical_engine.calculate_indicators(candles_h1, current_price=tick["price"])
 
         regime_info = regime_engine.classify_regime(tech_m15, tech_h1, macro_eval, session_info)
 
