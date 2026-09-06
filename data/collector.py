@@ -10,6 +10,7 @@ from data.binance_provider import BinanceGoldProvider
 from data.goldapi_provider import GoldAPIProvider
 from data.yfinance_provider import YahooFinanceProvider
 from data.data_quality import data_quality_engine
+from data.macro_provider import real_macro_provider
 
 class MarketDataCollector:
     def __init__(self):
@@ -17,6 +18,7 @@ class MarketDataCollector:
         self.binance = BinanceGoldProvider()
         self.goldapi = GoldAPIProvider()
         self.yfinance = YahooFinanceProvider()
+        self.macro_provider = real_macro_provider
         self.is_running = False
         self.latest_tick: Optional[Dict[str, Any]] = None
         self.latest_macro: Optional[Dict[str, Any]] = None
@@ -46,8 +48,7 @@ class MarketDataCollector:
                 
                 # Periodically update macro data (every 120s)
                 if not self.latest_macro or (time.time() - self.latest_macro.get("updated_at", 0)) > 120:
-                    macro = await self.yfinance.get_macro_data()
-                    macro["updated_at"] = time.time()
+                    macro = await self.macro_provider.get_macro_data()
                     self.latest_macro = macro
 
             except Exception as e:

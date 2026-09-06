@@ -35,11 +35,10 @@ class SnapshotEngine:
 
         # 2. Macro Data
         macro_data = data_collector.latest_macro
-        if not macro_data or (now - macro_data.get("updated_at", 0)) > 180:
+        if not macro_data or (now - macro_data.get("updated_at", 0)) > 120:
             try:
-                fresh_macro = await data_collector.yfinance.get_macro_data()
+                fresh_macro = await data_collector.macro_provider.get_macro_data()
                 if fresh_macro:
-                    fresh_macro["updated_at"] = now
                     macro_data = fresh_macro
                     data_collector.latest_macro = fresh_macro
             except Exception:

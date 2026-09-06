@@ -108,18 +108,18 @@ class AIEngine:
 
         if score >= 35:
             bias = "BULLISH"
-            confidence = min(60 + score // 2, 85)
+            confidence = min(60 + score // 2, 100)
             invalidation = round(price - (atr * 2.5), 2)
             status = "MONITOR_BREAKOUT"
         elif score <= -35:
             bias = "BEARISH"
-            confidence = min(60 + abs(score) // 2, 85)
+            confidence = min(60 + abs(score) // 2, 100)
             invalidation = round(price + (atr * 2.5), 2)
             status = "MONITOR_BREAKOUT"
         else:
             bias = "NEUTRAL"
-            confidence = 50
-            invalidation = round(price - 10.0, 2)
+            confidence = 30
+            invalidation = round(price - (atr * 2.0), 2)
             status = "WAIT FOR CONFIRMATION"
 
         return {

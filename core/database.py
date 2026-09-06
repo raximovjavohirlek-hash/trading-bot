@@ -104,6 +104,16 @@ class DatabaseManager:
                 )
             """)
 
+            # Subscribers Table (For automated high-confidence alerts)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS subscribers (
+                    chat_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
+                    created_at REAL
+                )
+            """)
+
             await db.commit()
         logger.info("Ma'lumotlar bazasi tayyorlandi.")
 
@@ -235,5 +245,21 @@ class DatabaseManager:
                 (now, alert_type, message, level)
             )
             await db.commit()
+
+    async def add_subscriber(self, chat_id: int, username: str = None, first_name: str = None):
+        now = datetime.now(timezone.utc).timestamp()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """INSERT OR REPLACE INTO subscribers (chat_id, username, first_name, created_at)
+                VALUES (?, ?, ?, ?)""",
+                (chat_id, username or "", first_name or "", now)
+            )
+            await db.commit()
+
+    async def get_subscribers(self) -> List[int]:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT chat_id FROM subscribers") as cursor:
+                rows = await cursor.fetchall()
+                return [r[0] for r in rows]
 
 db_manager = DatabaseManager()
