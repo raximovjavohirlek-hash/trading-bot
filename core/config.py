@@ -11,6 +11,7 @@ load_dotenv(BASE_DIR / ".env")
 class Settings:
     # Telegram
     TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    ADMIN_ID: int = int(os.getenv("ADMIN_ID", "0"))
     
     # API Keys
     GOLDAPI_KEY: str = os.getenv("GOLDAPI_KEY", "")

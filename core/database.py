@@ -114,6 +114,19 @@ class DatabaseManager:
                 )
             """)
 
+            # Users & Access Control Table
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    chat_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
+                    role TEXT DEFAULT 'USER',
+                    status TEXT DEFAULT 'PENDING',
+                    created_at REAL,
+                    approved_at REAL
+                )
+            """)
+
             await db.commit()
         logger.info("Ma'lumotlar bazasi tayyorlandi.")
 
@@ -261,5 +274,142 @@ class DatabaseManager:
             async with db.execute("SELECT chat_id FROM subscribers") as cursor:
                 rows = await cursor.fetchall()
                 return [r[0] for r in rows]
+
+    async def remove_subscriber(self, chat_id: int):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM subscribers WHERE chat_id = ?", (chat_id,))
+            await db.commit()
+
+    # -------------------------------------------------------------------------
+    # USER & ADMIN ACCESS CONTROL METHODS
+    # -------------------------------------------------------------------------
+    async def get_user(self, chat_id: int) -> Optional[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM users WHERE chat_id = ?", (chat_id,)) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def upsert_user(self, chat_id: int, username: str = None, first_name: str = None) -> Dict[str, Any]:
+        """
+        Creates or updates user.
+        If user is settings.ADMIN_ID or there are no admins in the system yet,
+        automatically makes them ADMIN with APPROVED status.
+        """
+        now = datetime.now(timezone.utc).timestamp()
+        existing = await self.get_user(chat_id)
+        if existing:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "UPDATE users SET username = ?, first_name = ? WHERE chat_id = ?",
+                    (username or existing.get("username", ""), first_name or existing.get("first_name", ""), chat_id)
+                )
+                await db.commit()
+            return await self.get_user(chat_id)
+
+        # Check if this user should be ADMIN
+        is_configured_admin = (settings.ADMIN_ID > 0 and chat_id == settings.ADMIN_ID)
+        admins = await self.get_admin_ids()
+        is_first_user_admin = (len(admins) == 0 and settings.ADMIN_ID == 0)
+
+        if is_configured_admin or is_first_user_admin:
+            role = "ADMIN"
+            status = "APPROVED"
+            approved_at = now
+        else:
+            role = "USER"
+            status = "PENDING"
+            approved_at = None
+
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """INSERT INTO users (chat_id, username, first_name, role, status, created_at, approved_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (chat_id, username or "", first_name or "", role, status, now, approved_at)
+            )
+            await db.commit()
+
+        # If approved, also add to subscribers
+        if status == "APPROVED":
+            await self.add_subscriber(chat_id, username, first_name)
+
+        return await self.get_user(chat_id)
+
+    async def set_user_status(self, chat_id: int, status: str) -> bool:
+        now = datetime.now(timezone.utc).timestamp()
+        approved_at = now if status == "APPROVED" else None
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE users SET status = ?, approved_at = COALESCE(?, approved_at) WHERE chat_id = ?",
+                (status, approved_at, chat_id)
+            )
+            await db.commit()
+
+        # Sync with subscribers table
+        if status == "APPROVED":
+            user = await self.get_user(chat_id)
+            if user:
+                await self.add_subscriber(chat_id, user.get("username"), user.get("first_name"))
+        elif status in ["REJECTED", "BLOCKED"]:
+            await self.remove_subscriber(chat_id)
+
+        return True
+
+    async def set_user_role(self, chat_id: int, role: str) -> bool:
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("UPDATE users SET role = ? WHERE chat_id = ?", (role, chat_id))
+            await db.commit()
+        return True
+
+    async def get_admin_ids(self) -> List[int]:
+        admin_ids = []
+        if settings.ADMIN_ID > 0:
+            admin_ids.append(settings.ADMIN_ID)
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT chat_id FROM users WHERE role = 'ADMIN'") as cursor:
+                rows = await cursor.fetchall()
+                for r in rows:
+                    if r[0] not in admin_ids:
+                        admin_ids.append(r[0])
+        return admin_ids
+
+    async def is_admin(self, chat_id: int) -> bool:
+        admins = await self.get_admin_ids()
+        return chat_id in admins
+
+    async def get_pending_users(self) -> List[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM users WHERE status = 'PENDING' ORDER BY created_at ASC") as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+    async def get_all_users(self) -> List[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM users ORDER BY created_at DESC") as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+    async def get_user_stats(self) -> Dict[str, int]:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT COUNT(*) FROM users") as c1:
+                total = (await c1.fetchone())[0]
+            async with db.execute("SELECT COUNT(*) FROM users WHERE status = 'APPROVED'") as c2:
+                approved = (await c2.fetchone())[0]
+            async with db.execute("SELECT COUNT(*) FROM users WHERE status = 'PENDING'") as c3:
+                pending = (await c3.fetchone())[0]
+            async with db.execute("SELECT COUNT(*) FROM users WHERE status = 'BLOCKED'") as c4:
+                blocked = (await c4.fetchone())[0]
+            async with db.execute("SELECT COUNT(*) FROM subscribers") as c5:
+                subscribers = (await c5.fetchone())[0]
+
+        return {
+            "total": total,
+            "approved": approved,
+            "pending": pending,
+            "blocked": blocked,
+            "subscribers": subscribers
+        }
 
 db_manager = DatabaseManager()
