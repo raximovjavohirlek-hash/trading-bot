@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from trading.risk_engine import risk_engine
+from trading.scheme_engine import scheme_engine
 
 def format_dashboard(snapshot: dict) -> str:
     """
@@ -140,62 +141,43 @@ def format_ai_report(ai_res: dict) -> str:
 
 def format_trading_scheme(snapshot: dict, ai_res: dict) -> str:
     """
-    Renders a complete, step-by-step Trading Scheme & Action Plan.
+    Renders an institutional, mathematically consistent Gold Trading Scheme & Action Plan.
     """
+    plan = scheme_engine.generate_plan(snapshot, ai_res)
     price = snapshot["price"]
-    tech_m15 = snapshot.get("tech_m15", {})
-    atr = tech_m15.get("atr", 3.5)
-    bias = ai_res.get("bias", "NEUTRAL")
-    confidence = ai_res.get("confidence", 50)
-    invalidation = ai_res.get("invalidation_price", price - 10.0)
-
-    # Determine Scenario
-    if bias == "BULLISH":
-        action = "BUY (Sotib Olish)"
-        entry_zone = f"${price - 1.50:.2f} - ${price:.2f}"
-        sl = round(min(invalidation, price - (atr * 1.8)), 2)
-        tp1 = round(price + (atr * 2.0), 2)
-        tp2 = round(price + (atr * 3.5), 2)
-        risk_lot = risk_engine.calculate_lot_size(10000.0, 1.0, price, sl)
-        action_emoji = "🟢"
-    elif bias == "BEARISH":
-        action = "SELL (Sotish)"
-        entry_zone = f"${price:.2f} - ${price + 1.50:.2f}"
-        sl = round(max(invalidation, price + (atr * 1.8)), 2)
-        tp1 = round(price - (atr * 2.0), 2)
-        tp2 = round(price - (atr * 3.5), 2)
-        risk_lot = risk_engine.calculate_lot_size(10000.0, 1.0, price, sl)
-        action_emoji = "🔴"
-    else:
-        action = "WAIT / KUTISH (Kuzatuv rejimida)"
-        entry_zone = "Kutish tavsiya etiladi"
-        sl = round(price - 10.0, 2)
-        tp1 = round(price + 10.0, 2)
-        tp2 = round(price + 20.0, 2)
-        risk_lot = {"lots": 0.01}
-        action_emoji = "🟡"
-
+    confluences_str = "\n• ".join(plan["confluences"])
     killzone_status = f"⚡ {snapshot['killzone_name']}" if snapshot["is_killzone"] else "Oddiy vaqt"
 
-    return f"""🎯 <b>BOZOR XO'LATI VA HAMMASI QADAM-BA-QADAM SAVDO SXEMASI</b>
+    return f"""🎯 <b>INSTITUTIONAL SAVDO SXEMASI (TRADING ACTION PLAN)</b>
 
-📌 <b>Hozirgi Narx:</b> <code>${price:.2f}</code>
-{action_emoji} <b>Tavsiya qilingan yo'nalish:</b> <b>{action}</b>
-🎯 <b>Ishonch darajasi:</b> <code>{confidence}/100</code>
+📌 <b>Joriy Spot Narxi:</b> <code>${price:.2f}</code>
+{plan['action_emoji']} <b>Tavsiya qilingan Yo'nalish:</b> <b>{plan['action_text']}</b>
+📋 <b>Strategiya:</b> <i>{plan['strategy_type']}</i>
+🎯 <b>Ishonch darajasi:</b> <code>{plan['confidence']}/100</code>
 
----
-🗺 <b>QADAM-BA-QADAM SXEMA (ACTION PLAN):</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+🗺 <b>QADAM-BA-QADAM SAVDO REJASI:</b>
 
-<b>1. Kirish Zonasi (Entry Range):</b> <code>{entry_zone}</code>
-<b>2. Xavfsiz Stop Loss (SL):</b> <code>${sl:.2f}</code> (Risk: ~{abs(round(price-sl, 2))} pip)
-<b>3. Birinchi Maqsad (TP1):</b> <code>${tp1:.2f}</code> (1:2 Risk/Reward)
-<b>4. Ikkinchi Maqsad (TP2):</b> <code>${tp2:.2f}</code> (1:3 Risk/Reward)
-<b>5. Hisoblangan Lot Size ($10k balans, 1% risk):</b> <code>{risk_lot['lots']} Lot</code>
+<b>1. Kirish Zonasi (Entry Range):</b> <code>{plan['entry_range']}</code>
+<b>2. Xavfsiz Stop Loss (SL):</b> <code>${plan['sl']:.2f}</code>
+   └ <i>Risk masofasi: ${plan['sl_dollars']:.2f} (~{plan['sl_pips']} pip)</i>
 
----
-⚡ <b>TASDIQLASH QOIDALARI (Confirmation Rules):</b>
-• <b>Seans:</b> {snapshot['session']} ({killzone_status})
-• <b>M15 Sham:</b> Kamida 15 minutlik sham mo'ljallangan yo'nalishda yopilishi kerak.
-• <b>Inkor bo'lish darajasi (Invalidation):</b> Narx <code>${invalidation}</code> ga yetsa, sxema bekor qilinadi.
+<b>3. Bosqichma-bosqich Maqsadlar (Take Profit):</b>
+   • <b>TP 1:</b> <code>${plan['tp1']:.2f}</code> (R:R {plan['tp1_rr']} - 50% yopish va BE)
+   • <b>TP 2:</b> <code>${plan['tp2']:.2f}</code> (R:R {plan['tp2_rr']} - Asosiy nishon)
+   • <b>TP 3:</b> <code>${plan['tp3']:.2f}</code> (R:R {plan['tp3_rr']} - Trend davomi)
 
-⚠️ <i>Savdoga kirmasdan oldin riskni to'g'ri boshqaring!</i>"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+💰 <b>RISK VA POZITSIYA HAJMI (1% Risk bo'yicha):</b>
+   • $1,000 hisob uchun:  <code>{plan['lot_1k']} Lot</code> (Risk: ~$10)
+   • $5,000 hisob uchun:  <code>{plan['lot_5k']} Lot</code> (Risk: ~$50)
+   • $10,000 hisob uchun: <code>{plan['lot_10k']} Lot</code> (Risk: ~$100)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚡ <b>TASDIQLOVCHI FAKTORLAR (CONFLUENCES):</b>
+• Seans: {plan['session']} ({killzone_status})
+• {confluences_str}
+❌ <b>Inkor darajasi (Invalidation):</b> <code>${plan['invalidation']:.2f}</code>
+
+🛡 <b>SAVDONI BOSHQARISH QOIDASI:</b>
+<i>Narx TP1 ga yetganida pozitsiyaning 50% qismini foyda bilan yoping va Stop Loss darajasini kirish narxiga (Breakeven) suring!</i>"""
